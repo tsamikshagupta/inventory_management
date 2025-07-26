@@ -1,125 +1,411 @@
+#!C:\Users\user\AppData\Local\Programs\Python\Python37\python.exe
+import os
+import cgi
+import cgitb
 import sqlite3
-import docx  
-from docx.shared import \
-    Inches 
-from docx.enum.text import \
-    WD_ALIGN_PARAGRAPH  
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
-import datetime
 
+# Enable traceback for debugging CGI scripts
+cgitb.enable()
 
-class Indent_form:
-    def __init__(self):
-        try:
+# Establish connection to SQLite database
+db_name = "project.db"
+conn = sqlite3.connect(db_name)
+cursor = conn.cursor()
 
-            itemid = "KMC1-REC-1"
-            supid = "KMC1-LB-01"
-            depipd = 'AD-01'
-            empid = ''
+# Function to get suppliers based on item name
+def get_suppliers(itemname):
+    cursor.execute("SELECT supid FROM itemtable WHERE itemname=?", (itemname,))
+    suppliers = cursor.fetchall()
+    return suppliers
 
-            indent_no = "IN-001-2024"
-            fname = indent_no + ".docx"
+# Function to get item ID based on item name
+def get_item_id(itemname):
+    cursor.execute("SELECT itemid FROM itemtable WHERE itemname=?", (itemname,))
+    item_id = cursor.fetchone()
+    return item_id[0] if item_id else None
 
-            in_date = datetime.date.today()
-            fdate = in_date.strftime("%d-%m-%y")
+# Generate HTML for dropdown menu with suppliers
+def generate_dropdown(suppliers):
+    dropdown_html = "<select name='suppliers' id='suppliers' class='form-select'>"
+    dropdown_html += "<option value=''>Select Supplier</option>"
+    for supplier in suppliers:
+        dropdown_html += "<option value='{}'>{}</option>".format(supplier[0], supplier[0])
+    dropdown_html += "</select>"
+    return dropdown_html
 
-            dbname = "Kmce1.db"
-            con = sqlite3.connect(dbname)
+# Generate HTML for dropdown menu with item names
+def generate_item_dropdown():
+    cursor.execute("SELECT DISTINCT itemname FROM itemtable")
+    items = cursor.fetchall()
+    dropdown_html = "<select name='itemname' id='itemname' class='form-select'>"
+    dropdown_html += "<option value=''>Select Item</option>"  # Added default option
+    for item in items:
+        dropdown_html += "<option value='{}'>{}</option>".format(item[0], item[0])
+    dropdown_html += "</select>"
+    return dropdown_html
 
-            sql_query = f'''select i.itemid,i.itemname,s.sname from itemtable i,suppliers s where s.supid='{supid}' and i.supid='{supid}' and i.itemid='{itemid}' '''
-            data = con.execute(sql_query)
-            result = data.fetchall()
+# Get form data
+form = cgi.FieldStorage()
 
-            sql_query = f''' select itemid, sum(quantity) as total_quantity from requirement where itemid = '{itemid}' '''
-            data = con.execute(sql_query)
-            quantity = data.fetchall()
+# Get selected values from form submission
+itemname = form.getvalue("itemname")
+supplier = form.getvalue("suppliers")
+quantity = form.getvalue("quantity")
 
-            sql_query = f'''select depname from department where depid='{depipd}' '''
-            data = con.execute(sql_query)
-            depname = data.fetchall()
+# Initialize variable to track insertion status
+insertion_status = ""
 
-            item_name = result[0][0] + "(" + itemid + ")"
-            supplier_name = result[0][1] + "(" + supid + ")"
+# Generate new indent number
+def generate_new_indent_number():
+    cursor.execute("SELECT indentno FROM indenttable ORDER BY indentno DESC LIMIT 1")
+    last_in_number = cursor.fetchone()
+    if last_in_number:
+        last_in_number = last_in_number[0]
+        last_digits = int(last_in_number.split("-")[1])
+        new_digits = last_digits + 1
+        new_in_number = "IN-{0:03d}-2024".format(new_digits)
+    else:
+        new_in_number = "IN-001-2024"
+    return new_in_number
 
-            document = docx.Document()  # a document object is created , this also creates an empty document in memory
-            print("file opened successful...")
-            heading_text = "Keshav Memorial Engineering College Of Engineering"
-            heading = document.add_heading(heading_text,
-                                           level=1)  #this statement calls add_heading function using document object to create an heading object giving text and heading kevel as parameters.
-            heading.alignment = WD_ALIGN_PARAGRAPH.CENTER  #the heading is centre aligned using WD_ALIGN_PARAGRAPH.CENTER  property
+# Insert values into indent table
+if form.getvalue("action") == "insert" and itemname and supplier and quantity:
+    itemid = get_item_id(itemname)
+    if itemid:
+        new_indent_number = generate_new_indent_number()
+        cursor.execute("INSERT INTO indenttable (indentno, itemid, supid, quantity, approval) VALUES (?, ?, ?, ?, ?)",
+                       (new_indent_number, itemid, supplier, quantity, 0))
+        conn.commit()
+        insertion_status = "Values inserted into indent table: {} {} {}".format(itemname, supplier, quantity)
+        # Redirect to print_indent.py with necessary parameters
+        print("Content-type: text/html\n")
+        print("<html>")
+        print("<head>")
+        print("<meta http-equiv='refresh' content='0;url=print_indent.py?indentno={}' />".format(new_indent_number))
+        print("</head>")
+        print("</html>")
+        exit()
+    else:
+        insertion_status = "Error: Invalid item name."
 
-            heading_text = "Koheda Road,Chinthapallyguda(V),Ibrahimpatnam(M),\nRR Dist-501510(T.S)Ph:9160102123,849981497"
-            heading = document.add_heading(heading_text, level=3)
-            heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+# Generate HTML response
+print("Content-type: text/html\n")
 
-            heading_text = "INDENT FORM\n\n"
-            heading = document.add_heading(heading_text, level=1)
-            heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+print("""
+<!DOCTYPE html>
+<html lang="en">
 
-            paragraph = document.add_paragraph()  # this statements adds an paragrapgh to the document
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {{
+            font-family: 'Poppins', sans-serif;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }}
 
-            paragraph.add_run(f'Indent No: {indent_no}								  Date:{fdate}\n\n')
+        .header-container {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            background-color: #f8f8f8;
+            border-bottom: 2px solid #cc0000;
+            text-align: center;
+            position: fixed;
+            width: 100%;
+            top: 0;
+            z-index: 1000;
+        }}
 
-            paragraph.add_run(
-                f'Name of the department: {depname[0][0]}\n')  # the add.run method adds text to the paragrapgh and run formats the text with default font style sixe and other properties
+        .logo {{
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            object-fit: cover;
+        }}
 
-            table = document.add_table(rows=7,cols=5)  # the add_table method creates a table in the document with rows and columns as it's parameters
+        .logo-column {{
+            flex: 2;
+            text-align: left;
+        }}
 
-            fnames = table.rows[
-                0].cells  # the row[] part allows us to access specific row of the table and the cells property gives access to each block in the table
-            fnames[0].text = 'S.No'
-            fnames[1].text = 'Item Name'
-            fnames[2].text = 'Supplier Name'
-            fnames[3].text = 'Quantity'
-            fnames[4].text = 'Total Cost'
+        .header-container .text-column {{
+            flex: 1;
+        }}
 
-            values = table.rows[1].cells
-            values[0].text = '1.'
-            values[1].text = f'{item_name}'
-            values[2].text = f'{supplier_name}'
-            values[3].text = f'{quantity[0][1]}'
-            values[4].text = ''
+        .header-container h1,
+        .header-container h2,
+        .header-container p {{
+            margin: 0;
+        }}
 
-            def set_cell_borders(
-                    cell):  #this method creates borders around four corners of each cell making a visible table in word document
+        .header-container h1 {{
+            color: #cc0000;
+            font-size: 1.5rem;
+            margin-bottom: 5px;
+        }}
 
-                tc = cell._tc
-                tcPr = tc.get_or_add_tcPr()
-                tcBorders = OxmlElement('w:tcBorders')
-                for side in ['top', 'left', 'bottom', 'right']:
-                    border = OxmlElement(f'w:{side}')
-                    border.set(qn('w:val'), 'single')
-                    border.set(qn('w:sz'), '4')  # Border size (1/8 pt)
-                    border.set(qn('w:space'), '0')  # No space between borders
-                    border.set(qn('w:color'), 'auto')  # Automatic color
-                    tcBorders.append(border)
-                tcPr.append(tcBorders)
+        .header-container p {{
+            color: #333;
+            font-size: 1rem;
+        }}
 
-            for row in table.rows:
-                for cell in row.cells:
-                    set_cell_borders(cell)
+        .navbar {{
+            background-color: maroon;
+            color: white;
+            padding-top: 120px;
+        }}
 
-            paragraph1 = document.add_paragraph()
+        .navbar a {{
+            color: white;
+        }}
 
-            paragraph1.add_run(f'\n\nRequested By: {depipd[0]}\n\n')
+        .navbar a:hover {{
+            color: lightgray;
+        }}
 
-            paragraph1.add_run('Admin/HOD signature: \n\n')
+        .content {{
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            margin-top: 50px;
+            font-size: 1.2rem;
+        }}
 
-            paragraph1.add_run('Approved By: \n\n\n')
+        .form-label {{
+            font-size: 1.2rem;
+            margin: 10px 0;
+        }}
 
-            paragraph1.add_run('Principal:                              							Director:')
+        .form-select, .form-input {{
+            font-size: 1.2rem;
+            padding: 10px;
+            margin: 10px 0;
+            width: 300px;
+        }}
 
-            paragraph1.add_run(' ')
+        .form-button {{
+            background-color: #800000;
+            color: white;
+            font-size: 1.0rem;
+            padding: 10px 20px;
+            border: none;
+            cursor: pointer;
+            margin: 10px 0;
+        }}
 
-            document.save(f'{fname}')  # the save method saves the document with the name given
-            print("Docx file created successfully , Check in this file location")
+        .form-button:hover {{
+            background-color: #a00000;
+        }}
 
+        .footer {{
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding: 0px 30px;
+            color: #ffffff;
+            background-color: #870E03;
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            font-family: 'Poppins', sans-serif;
+            flex-wrap: wrap;
+        }}
 
-        except FileNotFoundError:  # the FileNotFoundError class detects file not found error if file is not found
-            print("Error")
-            return
+        .footer__section {{
+            flex: 1;
+        }}
 
+        .footer__addr {{
+            margin-top: 0.4em;
+            font-size: 15px;
+            font-weight: 400;
+        }}
 
-if __name__ == "__main__":
-    Indent_form()
+        .footer__logo {{
+            font-family: 'Poppins', sans-serif;
+            font-weight: 400;
+            text-transform: uppercase;
+            font-size: 1.5rem;
+        }}
+
+        .footer__addr h2 {{
+            margin-top: 0.4em;
+            font-size: 15px;
+            font-weight: 400;
+        }}
+
+        .nav__title {{
+            margin-top: 0.4em;
+            font-size: 15px;
+            font-weight: 400;
+            margin-left: auto;
+        }}
+
+        .footer address {{
+            margin-top: 0.4em;
+            font-style: normal;
+            color: white;
+        }}
+
+        .footer__btn {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 36px;
+            max-width: max-content;
+            background-color: rgba(33, 33, 33, 0.07);
+            border-radius: 100px;
+            color: white;
+            line-height: 0;
+            margin: 0.6em 0;
+            font-size: 1rem;
+            padding: 0 1.3em;
+        }}
+
+        .footer ul {{
+            list-style: none;
+            padding-left: 0;
+        }}
+
+        .footer li {{
+            line-height: 30px;
+        }}
+
+        .footer a {{
+            text-decoration: none;
+        }}
+
+        .footer__nav {{
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            width: 100%;
+        }}
+
+        .nav__ul a {{
+            color: white;
+        }}
+
+        @media screen and (min-width: 24.375em) {{
+            .legal .legal__links {{
+                margin-left: auto;
+            }}
+        }}
+
+        @media screen and (min-width: 40.375em) {{
+            .footer__nav {{
+                flex: 2 0px;
+            }}
+
+            .footer__addr {{
+                flex: 1 0px;
+            }}
+        }}
+
+    </style>
+
+    <title>Item Details</title>
+</head>
+
+<body>
+    <header class="header-container">
+        <img src="images/logo.png" class="logo">
+        <div class="text-column">
+            <h1 class="text-4xl font-semibold main-heading">Keshav Memorial College Of Engineering</h1>
+            <p class="text-lg font-medium sub-heading mt-2">A unit of Keshav Memorial Technical Educational Society (KMTES)</p>
+            <p>Approved by AICTE | New Delhi</p>
+            <p> Affiliated to Jawaharlal Nehru Technological University, Hyderabad</p>
+        </div>
+    </header>
+
+    <header class="text-gray-600 body-font navbar" role="navigation">
+        <div class="container mx-auto relative flex flex-wrap p-5 flex-col md:flex-row items-center">
+            <a href="index.html" class="flex title-font font-medium items-center mb-4 md:mb-0"></a>
+            <nav class="md:ml-auto md:mr-auto flex flex-wrap items-center text-base justify-center">
+                <a class="mr-5 hover:text-lightgray" href="index.html">HOME</a>
+                <a class="mr-5 hover:text-lightgray" href="about.html">ABOUT US</a>
+                <a class="mr-5 hover:text-lightgray" href="check_indent.py">GO BACK</a>
+            </nav>
+        </div>
+    </header>
+<div style='text-align: center;margin-top: 20px;'>
+<h2 style='color: maroon; font-weight: 600;font-size:24px;'>INDENT FORM</h2>
+</div>
+    <div class="content">
+        <div id='formDiv'>
+            <form id='supplierForm' method='post' action=''>
+                <label class='form-label' for='itemname'>Select Item name:</label>
+                {item_dropdown}
+                <br>
+                <label class='form-label' for='quantity'>Quantity:</label>
+                <input type='text' id='quantity' name='quantity' class='form-input'>
+                <input type='hidden' name='action' value='display_suppliers'>
+                <button type='submit' class='form-button'>Display Suppliers</button>
+            </form>
+        </div>
+""".format(item_dropdown=generate_item_dropdown()))
+
+if itemname and form.getvalue("action") == "display_suppliers":
+    suppliers = get_suppliers(itemname)
+    print("""
+        <div id='supplierTable'>
+            <form method='post' action=''>
+                <label class='form-label' for='suppliers'>Select Supplier:</label>
+                {supplier_dropdown}
+                <br>
+                <input type='hidden' name='itemname' value='{itemname}'>
+                <input type='hidden' name='quantity' value='{quantity}'>
+                <input type='hidden' name='action' value='insert'>
+                <button type='submit' class='form-button'>Submit</button>
+            </form>
+        </div>
+    """.format(supplier_dropdown=generate_dropdown(suppliers), itemname=itemname, quantity=quantity))
+
+print("<div id='selectedOptions'></div>")
+
+if insertion_status:
+    print("<p>{}</p>")
+    print("<button class='form-button' style='width: 10%; margin: 0 auto;' onclick=\"redirectToPrint()\">OK</button>")
+
+print("""
+    <script>
+    function redirectToPrint() {
+        window.location.href = 'print_indent.py';
+    }
+    </script>
+    <footer class="footer">
+        <div class="footer_section footer_addr">
+            <h2>Contact</h2>
+            <address>Office : 8499981497<br></address>
+        </div>
+        <div class="footer__section">
+            <h2 class="nav__title">Email id:</h2>
+            <ul class="nav__ul">
+                <li><a href="mailto:admin@kmce.in">admin@kmce.in</a></li>
+            </ul>
+        </div>
+        <div class="footer__section">
+            <h2 class="nav__title">Landline:</h2>
+            <ul class="nav__ul">
+                <li><a href="tel:040-xxxx-123">040-xxxx-123</a></li>
+            </ul>
+        </div>
+        <div class="footer__section">
+            <h2 class="nav__title">Address:</h2>
+            <ul class="nav__ul">
+                <li><a href="#">Koheda Road, Ibrahimpatnam</a></li>
+            </ul>
+        </div>
+    </footer>
+</body>
+</html>
+""")
